@@ -87,6 +87,7 @@ const Render = struct {
     ais: *Ais,
     tree: Ast,
     fixups: Fixups,
+    leading_comment: ?usize = null,
 };
 
 pub fn renderTree(buffer: *std.ArrayList(u8), tree: Ast, fixups: Fixups) Error!void {
@@ -106,7 +107,7 @@ pub fn renderTree(buffer: *std.ArrayList(u8), tree: Ast, fixups: Fixups) Error!v
 
     // Render all the line comments at the beginning of the file.
     const comment_end_loc = tree.tokens.items(.start)[0];
-    _ = try renderComments(&r, 0, comment_end_loc);
+    _ = try renderComments(&r, 0, comment_end_loc, .leading);
 
     if (tree.tokens.items(.tag)[0] == .container_doc_comment) {
         try renderContainerDocComments(&r, 0);
@@ -2604,66 +2605,6 @@ fn renderParamList(
     return renderToken(r, after_last_param_tok, space); // )
 }
 
-/// Renders the given expression indented, popping the indent before rendering
-/// any following line comments
-fn renderExpressionIndented(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
-    const tree = r.tree;
-    const ais = r.ais;
-    const token_starts = tree.tokens.items(.start);
-    const token_tags = tree.tokens.items(.tag);
-
-    try ais.pushIndent();
-
-    var last_token = tree.lastToken(node);
-    const punctuation = switch (space) {
-        .none, .space, .newline, .skip => false,
-        .comma => true,
-        .comma_space => token_tags[last_token + 1] == .comma,
-        .semicolon => token_tags[last_token + 1] == .semicolon,
-    };
-
-    try renderExpression(r, node, if (punctuation) .none else .skip);
-
-    switch (space) {
-        .none, .space, .newline, .skip => {},
-        .comma => {
-            if (token_tags[last_token + 1] == .comma) {
-                try renderToken(r, last_token + 1, .skip);
-                last_token += 1;
-            } else {
-                try ais.writer().writeByte(',');
-            }
-        },
-        .comma_space => if (token_tags[last_token + 1] == .comma) {
-            try renderToken(r, last_token + 1, .skip);
-            last_token += 1;
-        },
-        .semicolon => if (token_tags[last_token + 1] == .semicolon) {
-            try renderToken(r, last_token + 1, .skip);
-            last_token += 1;
-        },
-    }
-
-    ais.popIndent();
-
-    if (space == .skip) return;
-
-    const comment_start = token_starts[last_token] + tokenSliceForRender(tree, last_token).len;
-    const comment = try renderComments(r, comment_start, token_starts[last_token + 1]);
-
-    if (!comment) switch (space) {
-        .none => {},
-        .space,
-        .comma_space,
-        => try ais.writer().writeByte(' '),
-        .newline,
-        .comma,
-        .semicolon,
-        => try ais.insertNewline(),
-        .skip => unreachable,
-    };
-}
-
 /// Render an expression, and the comma that follows it, if it is present in the source.
 /// If a comma is present, and `space` is `Space.comma`, render only a single comma.
 fn renderExpressionComma(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
@@ -2731,6 +2672,7 @@ fn renderToken(r: *Render, token_index: Ast.TokenIndex, space: Space) Error!void
     const tree = r.tree;
     const ais = r.ais;
     const lexeme = tokenSliceForRender(tree, token_index);
+    try renderLeadingComments(r, token_index);
     try ais.writer().writeAll(lexeme);
     try renderSpace(r, token_index, lexeme.len, space);
 }
@@ -2749,7 +2691,7 @@ fn renderSpace(r: *Render, token_index: Ast.TokenIndex, lexeme_len: usize, space
         try ais.writer().writeByte(',');
     }
 
-    const comment = try renderComments(r, token_start + lexeme_len, token_starts[token_index + 1]);
+    const comment = try renderTrailingComments(r, token_start + lexeme_len, token_starts[token_index + 1]);
     switch (space) {
         .none => {},
         .space => if (!comment) try ais.writer().writeByte(' '),
@@ -2803,6 +2745,7 @@ fn renderIdentifier(r: *Render, token_index: Ast.TokenIndex, space: Space, quote
     const lexeme = tokenSliceForRender(tree, token_index);
 
     if (r.fixups.rename_identifiers.get(lexeme)) |mangled| {
+        try renderLeadingComments(r, token_index);
         try r.ais.writer().writeAll(mangled);
         try renderSpace(r, token_index, lexeme.len, space);
         return;
@@ -2811,6 +2754,8 @@ fn renderIdentifier(r: *Render, token_index: Ast.TokenIndex, space: Space, quote
     if (lexeme[0] != '@') {
         return renderToken(r, token_index, space);
     }
+
+    try renderLeadingComments(r, token_index);
 
     assert(lexeme.len >= 3);
     assert(lexeme[0] == '@');
@@ -2989,11 +2934,26 @@ fn hasMultilineString(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.Tok
     return false;
 }
 
+fn renderLeadingComments(r: *Render, next_token: Ast.TokenIndex) Error!void {
+    if (r.leading_comment) |start| {
+        const token_starts = r.tree.tokens.items(.start);
+        _ = try renderComments(r, start, token_starts[next_token], .leading);
+        r.leading_comment = null;
+    }
+}
+
+fn renderTrailingComments(r: *Render, start: usize, end: usize) Error!bool {
+    return renderComments(r, start, end, .trailing);
+}
+
 /// Assumes that start is the first byte past the previous token and
 /// that end is the last byte before the next token.
-fn renderComments(r: *Render, start: usize, end: usize) Error!bool {
+fn renderComments(r: *Render, start: usize, end: usize, mode: enum { leading, trailing }) Error!bool {
     const tree = r.tree;
     const ais = r.ais;
+
+    if (mode == .leading) ais.disableIndentCommitting();
+    defer ais.enableIndentCommitting();
 
     var index: usize = start;
     while (mem.indexOf(u8, tree.source[index..end], "//")) |offset| {
@@ -3007,15 +2967,19 @@ fn renderComments(r: *Render, start: usize, end: usize) Error!bool {
         const trimmed_comment = mem.trimRight(u8, untrimmed_comment, &std.ascii.whitespace);
 
         // Don't leave any whitespace at the start of the file
-        if (index != 0) {
+        if (index != 0 and mode == .trailing) {
             if (index == start and mem.containsAtLeast(u8, tree.source[index..comment_start], 2, "\n")) {
                 // Leave up to one empty line before the first comment
                 try ais.insertNewline();
                 try ais.insertNewline();
+                r.leading_comment = comment_start;
+                return true;
             } else if (mem.indexOfScalar(u8, tree.source[index..comment_start], '\n') != null) {
                 // Respect the newline directly before the comment.
                 // Note: This allows an empty line between comments
                 try ais.insertNewline();
+                r.leading_comment = comment_start;
+                return true;
             } else if (index == start) {
                 // Otherwise if the first comment is on the same line as
                 // the token before it, prefix it with a single space.
@@ -3051,6 +3015,10 @@ fn renderComments(r: *Render, start: usize, end: usize) Error!bool {
         }
     }
 
+    if (index != start) {
+        if (debug_output) std.debug.print("{}", .{mode});
+        if (debug_output) std.debug.dumpCurrentStackTrace(@returnAddress());
+    }
     return index != start;
 }
 
@@ -3317,6 +3285,7 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
         indent_count: usize = 0,
         indent_delta: usize,
         indent_stack: std.BitStack,
+        indent_committing: bool = true,
         current_line_empty: bool = true,
         /// the most recently applied indent
         applied_indent: usize = 0,
@@ -3329,7 +3298,7 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
             if (bytes.len == 0)
                 return @as(usize, 0);
 
-            if (debug_output) std.debug.print("write: {s}\n", .{bytes});
+            if (debug_output) std.debug.print(" write: {s}\n", .{bytes});
 
             try self.applyIndent();
             return self.writeNoIndent(bytes);
@@ -3365,14 +3334,23 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
         }
 
         fn reachedEndOfLine(self: *Self) void {
+            self.current_line_empty = true;
+            if (!self.indent_committing) return;
             if (!self.indent_stack.isEmpty() and self.indent_stack.peek() == 0) {
-                // Only realize last pushed indent
+                // Only commit last pushed indent
                 _ = self.indent_stack.pop();
                 self.indent_stack.push(1) catch unreachable;
                 self.indent_count += 1;
                 if (debug_output) std.debug.print("commit {}\n", .{ self.indent_count });
             }
-            self.current_line_empty = true;
+        }
+
+        fn disableIndentCommitting(self: *Self) void {
+            self.indent_committing = false;
+        }
+
+        fn enableIndentCommitting(self: *Self) void {
+            self.indent_committing = true;
         }
 
         /// Insert a newline unless the current line is blank
