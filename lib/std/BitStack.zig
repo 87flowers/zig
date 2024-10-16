@@ -42,6 +42,10 @@ pub fn pop(self: *@This()) u1 {
     return popWithState(self.bytes.items, &self.bit_len);
 }
 
+pub fn isEmpty(self: *@This()) bool {
+    return self.bit_len == 0;
+}
+
 /// Standalone function for working with a fixed-size buffer.
 pub fn pushWithStateAssumeCapacity(buf: []u8, bit_len: *usize, b: u1) void {
     const byte_index = bit_len.* >> 3;
