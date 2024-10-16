@@ -565,9 +565,7 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
             if (tree.tokensOnSameLine(op_token, op_token + 1)) {
                 try renderToken(r, op_token, .space);
             } else {
-                try ais.pushIndent();
                 try renderToken(r, op_token, .newline);
-                ais.popIndent();
             }
             return renderExpression(r, infix.rhs, space);
         },
@@ -1348,7 +1346,9 @@ fn renderThenElse(
     defer if (indent_then_expr) ais.popIndent();
 
     if (indent_then_expr or block_requires_newline) {
+        ais.disableIndentCommitting();
         try renderToken(r, last_prefix_token, .newline);
+        ais.enableIndentCommitting();
     } else {
         try renderToken(r, last_prefix_token, .space);
     }
@@ -1957,8 +1957,8 @@ fn finishRenderBlock(
             else => try renderExpression(r, stmt, .semicolon),
         }
     }
+    try renderLeadingComments(r, tree.lastToken(block_node));
     ais.popIndent();
-
     try renderToken(r, tree.lastToken(block_node), space); // rbrace
 }
 
@@ -2953,7 +2953,7 @@ fn renderComments(r: *Render, start: usize, end: usize, mode: enum { leading, tr
     const ais = r.ais;
 
     if (mode == .leading) ais.disableIndentCommitting();
-    defer ais.enableIndentCommitting();
+    defer if (mode == .leading) ais.enableIndentCommitting();
 
     var index: usize = start;
     while (mem.indexOf(u8, tree.source[index..end], "//")) |offset| {
@@ -3285,7 +3285,7 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
         indent_count: usize = 0,
         indent_delta: usize,
         indent_stack: std.BitStack,
-        indent_committing: bool = true,
+        disable_indent_committing: usize = 0,
         current_line_empty: bool = true,
         /// the most recently applied indent
         applied_indent: usize = 0,
@@ -3335,7 +3335,7 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
 
         fn reachedEndOfLine(self: *Self) void {
             self.current_line_empty = true;
-            if (!self.indent_committing) return;
+            if (self.disable_indent_committing > 0) return;
             if (!self.indent_stack.isEmpty() and self.indent_stack.peek() == 0) {
                 // Only commit last pushed indent
                 _ = self.indent_stack.pop();
@@ -3346,11 +3346,12 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
         }
 
         fn disableIndentCommitting(self: *Self) void {
-            self.indent_committing = false;
+            self.disable_indent_committing += 1;
         }
 
         fn enableIndentCommitting(self: *Self) void {
-            self.indent_committing = true;
+            assert(self.disable_indent_committing > 0);
+            self.disable_indent_committing -= 1;
         }
 
         /// Insert a newline unless the current line is blank
@@ -3359,13 +3360,22 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
                 try self.insertNewline();
         }
 
+        fn debugPrintIdentStack(self: *Self) void {
+            if (!debug_output) return;
+            for (0..self.indent_stack.bit_len) |i| {
+                std.debug.print("{}", .{std.BitStack.peekWithState(self.indent_stack.bytes.items, i + 1)});
+            }
+            std.debug.print("\n", .{});
+        }
+
         /// Push default indentation
         /// Doesn't actually write any indentation.
         /// Just primes the stream to be able to write the correct indentation if it needs to.
         pub fn pushIndent(self: *Self) !void {
             try self.indent_stack.push(0);
             printName(@returnAddress());
-            if (debug_output) std.debug.print(" pushIndent\n", .{});
+            if (debug_output) std.debug.print(" pushIndent ", .{});
+            self.debugPrintIdentStack();
         }
 
         pub fn popIndent(self: *Self) void {
@@ -3376,7 +3386,8 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
                 if (debug_output) std.debug.print("uncommit {}\n", .{ self.indent_count });
             }
             printName(@returnAddress());
-            if (debug_output) std.debug.print(" popIndent\n", .{});
+            if (debug_output) std.debug.print(" popIndent ", .{});
+            self.debugPrintIdentStack();
         }
 
         /// Writes ' ' bytes if the current line is empty
