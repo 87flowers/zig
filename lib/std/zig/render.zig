@@ -362,6 +362,9 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
         return renderExpression(r, replacement, space);
     }
 
+    try ais.pushIndent();
+    defer ais.popIndent();
+
     switch (node_tags[node]) {
         .identifier => {
             const token_index = main_tokens[node];
@@ -475,9 +478,6 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
         .field_access => {
             const main_token = main_tokens[node];
             const field_access = datas[node];
-
-            try ais.pushIndent();
-            defer ais.popIndent();
 
             try renderExpression(r, field_access.lhs, .none);
 
