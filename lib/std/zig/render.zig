@@ -362,9 +362,6 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
         return renderExpression(r, replacement, space);
     }
 
-    try ais.pushIndent();
-    defer ais.popIndent();
-
     switch (node_tags[node]) {
         .identifier => {
             const token_index = main_tokens[node];
@@ -479,6 +476,9 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
             const main_token = main_tokens[node];
             const field_access = datas[node];
 
+            try ais.pushIndent();
+            defer ais.popIndent();
+
             try renderExpression(r, field_access.lhs, .none);
 
             // Allow a line break between the lhs and the dot if the lhs and rhs
@@ -561,6 +561,9 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
         .sub_sat,
         .@"orelse",
         => {
+            try ais.pushIndent();
+            defer ais.popIndent();
+
             const infix = datas[node];
             try renderExpression(r, infix.lhs, .space);
             const op_token = main_tokens[node];
