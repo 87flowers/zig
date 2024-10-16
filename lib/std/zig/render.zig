@@ -561,9 +561,6 @@ fn renderExpression(r: *Render, node: Ast.Node.Index, space: Space) Error!void {
         .sub_sat,
         .@"orelse",
         => {
-            try ais.pushIndent();
-            defer ais.popIndent();
-
             const infix = datas[node];
             try renderExpression(r, infix.lhs, .space);
             const op_token = main_tokens[node];
