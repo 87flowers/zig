@@ -1340,7 +1340,7 @@ fn renderThenElse(
     const ais = r.ais;
     const node_tags = tree.nodes.items(.tag);
     const then_expr_is_block = nodeIsBlock(node_tags[then_expr]);
-    const indent_then_expr = !then_expr_is_block;
+    const indent_then_expr = !then_expr_is_block and !tree.tokensOnSameLine(last_prefix_token, tree.firstToken(then_expr))
     const block_requires_newline = then_expr_is_block and ais.isLineOverIndented();
 
     if (indent_then_expr) try ais.pushIndent();
