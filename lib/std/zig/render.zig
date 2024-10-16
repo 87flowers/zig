@@ -214,6 +214,7 @@ fn renderMember(
                 try ais.pushIndent();
                 const lbrace = tree.nodes.items(.main_token)[body_node];
                 try renderToken(r, lbrace, .newline);
+                try renderLeadingComments(r);
                 try discardAllParams(r, fn_proto);
                 try ais.writer().writeAll("@trap();");
                 ais.popIndent();
@@ -1929,6 +1930,7 @@ fn renderBlock(
     try ais.pushIndent();
     if (statements.len == 0) {
         try renderToken(r, lbrace, .none);
+        try renderLeadingComments(r);
         ais.popIndent();
         try renderToken(r, tree.lastToken(block_node), space); // rbrace
         return;
@@ -1959,7 +1961,7 @@ fn finishRenderBlock(
             else => try renderExpression(r, stmt, .semicolon),
         }
     }
-    try renderLeadingComments(r, tree.lastToken(block_node));
+    try renderLeadingComments(r);
     ais.popIndent();
     try renderToken(r, tree.lastToken(block_node), space); // rbrace
 }
@@ -1981,6 +1983,7 @@ fn renderStructInit(
     if (struct_init.ast.fields.len == 0) {
         try ais.pushIndent();
         try renderToken(r, struct_init.ast.lbrace, .none); // lbrace
+        try renderLeadingComments(r);
         ais.popIndent();
         return renderToken(r, struct_init.ast.lbrace + 1, space); // rbrace
     }
@@ -2049,6 +2052,7 @@ fn renderArrayInit(
     if (array_init.ast.elements.len == 0) {
         try ais.pushIndent();
         try renderToken(r, array_init.ast.lbrace, .none); // lbrace
+        try renderLeadingComments(r);
         ais.popIndent();
         return renderToken(r, array_init.ast.lbrace + 1, space); // rbrace
     }
@@ -2256,6 +2260,7 @@ fn renderArrayInit(
             break;
     }
 
+    try renderLeadingComments(r);
     ais.popIndent();
     return renderToken(r, rbrace, space); // rbrace
 }
@@ -2319,6 +2324,7 @@ fn renderContainerDecl(
         } else {
             try renderToken(r, lbrace, .none); // lbrace
         }
+        try renderLeadingComments(r);
         ais.popIndent();
         return renderToken(r, rbrace, space); // rbrace
     }
@@ -2371,8 +2377,8 @@ fn renderContainerDecl(
             else => try renderMember(r, container, member, .newline),
         }
     }
+    try renderLeadingComments(r);
     ais.popIndent();
-
     return renderToken(r, rbrace, space); // rbrace
 }
 
@@ -2676,7 +2682,7 @@ fn renderToken(r: *Render, token_index: Ast.TokenIndex, space: Space) Error!void
     const tree = r.tree;
     const ais = r.ais;
     const lexeme = tokenSliceForRender(tree, token_index);
-    try renderLeadingComments(r, token_index);
+    try renderLeadingComments(r);
     try ais.writer().writeAll(lexeme);
     try renderSpace(r, token_index, lexeme.len, space);
 }
@@ -2749,7 +2755,7 @@ fn renderIdentifier(r: *Render, token_index: Ast.TokenIndex, space: Space, quote
     const lexeme = tokenSliceForRender(tree, token_index);
 
     if (r.fixups.rename_identifiers.get(lexeme)) |mangled| {
-        try renderLeadingComments(r, token_index);
+        try renderLeadingComments(r);
         try r.ais.writer().writeAll(mangled);
         try renderSpace(r, token_index, lexeme.len, space);
         return;
@@ -2759,7 +2765,7 @@ fn renderIdentifier(r: *Render, token_index: Ast.TokenIndex, space: Space, quote
         return renderToken(r, token_index, space);
     }
 
-    try renderLeadingComments(r, token_index);
+    try renderLeadingComments(r);
 
     assert(lexeme.len >= 3);
     assert(lexeme[0] == '@');
