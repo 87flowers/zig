@@ -2043,6 +2043,8 @@ fn renderArrayInit(
     const gpa = r.gpa;
     const token_tags = tree.tokens.items(.tag);
 
+    try renderLeadingComments(r);
+
     if (array_init.ast.type_expr == 0) {
         try renderToken(r, array_init.ast.lbrace - 1, .none); // .
     } else {
