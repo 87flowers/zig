@@ -87,7 +87,7 @@ const Render = struct {
     ais: *Ais,
     tree: Ast,
     fixups: Fixups,
-    leading_comment: ?usize = null,
+    leading_comment: ? struct{ usize, usize },
 };
 
 pub fn renderTree(buffer: *std.ArrayList(u8), tree: Ast, fixups: Fixups) Error!void {
@@ -103,6 +103,7 @@ pub fn renderTree(buffer: *std.ArrayList(u8), tree: Ast, fixups: Fixups) Error!v
         .ais = &auto_indenting_stream,
         .tree = tree,
         .fixups = fixups,
+        .leading_comment = null,
     };
 
     // Render all the line comments at the beginning of the file.
@@ -2152,7 +2153,9 @@ fn renderArrayInit(
             .ais = &auto_indenting_stream,
             .tree = r.tree,
             .fixups = r.fixups,
+            .leading_comment = r.leading_comment,
         };
+        defer r.leading_comment = sub_render.leading_comment;
 
         // Calculate size of columns in current section
         var column_counter: usize = 0;
@@ -2935,10 +2938,10 @@ fn hasMultilineString(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.Tok
     return false;
 }
 
-fn renderLeadingComments(r: *Render, next_token: Ast.TokenIndex) Error!void {
-    if (r.leading_comment) |start| {
-        const token_starts = r.tree.tokens.items(.start);
-        _ = try renderComments(r, start, token_starts[next_token], .leading);
+fn renderLeadingComments(r: *Render) Error!void {
+    if (r.leading_comment) |leading_comment| {
+        const start, const end = leading_comment;
+        _ = try renderComments(r, start, end, .leading);
         r.leading_comment = null;
     }
 }
@@ -2973,13 +2976,13 @@ fn renderComments(r: *Render, start: usize, end: usize, mode: enum { leading, tr
                 // Leave up to one empty line before the first comment
                 try ais.insertNewline();
                 try ais.insertNewline();
-                r.leading_comment = comment_start;
+                r.leading_comment = .{ comment_start, end };
                 return true;
             } else if (mem.indexOfScalar(u8, tree.source[index..comment_start], '\n') != null) {
                 // Respect the newline directly before the comment.
                 // Note: This allows an empty line between comments
                 try ais.insertNewline();
-                r.leading_comment = comment_start;
+                r.leading_comment = .{ comment_start, end };
                 return true;
             } else if (index == start) {
                 // Otherwise if the first comment is on the same line as
