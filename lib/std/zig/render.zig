@@ -2740,6 +2740,7 @@ fn renderSpace(r: *Render, token_index: Ast.TokenIndex, lexeme_len: usize, space
     if (space == .comma and token_tags[token_index + 1] != .comma) {
         try ais.writer().writeByte(',');
     }
+    std.debug.print("renderSpace {}\n", .{space});
     if (space == .semicolon or space == .comma) ais.enableSpaceMode(space);
     defer ais.disableSpaceMode();
     const comment = try renderComments(r, token_start + lexeme_len, token_starts[token_index + 1]);
@@ -3353,6 +3354,8 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
             if (bytes.len == 0)
                 return @as(usize, 0);
 
+            if (debug_output) std.debug.print(" write: {s}\n", .{bytes});
+
             try self.applyIndent();
             return self.writeNoIndent(bytes);
         }
@@ -3403,6 +3406,7 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
 
                     self.indent_stack.items[self.indent_stack.items.len - 1].realized = true;
                     self.indent_count += 1;
+                    if (debug_output) std.debug.print("commit {}\n", .{ self.indent_count });
                 }
             }
         }
@@ -3418,10 +3422,14 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
 
         pub fn pushSpace(self: *Self, space: Space) !void {
             try self.space_stack.append(.{ .space = space, .indent_count = self.indent_count });
+            printName(@returnAddress());
+            if (debug_output) std.debug.print(" pushSpace {} {}\n", .{space, self.indent_count});
         }
 
         pub fn popSpace(self: *Self) void {
-            _ = self.space_stack.pop();
+            const p = self.space_stack.pop();
+            printName(@returnAddress());
+            if (debug_output) std.debug.print(" popSpace {} {}\n", .{p.space, p.indent_count});
         }
 
         pub fn enableSpaceMode(self: *Self, space: Space) void {
@@ -3432,6 +3440,8 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
             }
             assert(curr.space == space);
             self.space_mode = curr.indent_count;
+            printName(@returnAddress());
+            if (debug_output) std.debug.print(" spaceMode {} {}\n", .{space, curr.indent_count});
         }
 
         pub fn disableSpaceMode(self: *Self) void {
@@ -3449,13 +3459,26 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
         /// Just primes the stream to be able to write the correct indentation if it needs to.
         pub fn pushIndent(self: *Self, indent_type: IndentType) !void {
             try self.indent_stack.append(.{ .indent_type = indent_type, .realized = false });
+            printName(@returnAddress());
+            if (debug_output) std.debug.print(" pushIndent ", .{});
+            self.debugPrintIndentStack();
         }
 
         pub fn popIndent(self: *Self) void {
             if (self.indent_stack.pop().realized) {
                 assert(self.indent_count > 0);
                 self.indent_count -= 1;
+                if (debug_output) std.debug.print("uncommit {}\n", .{ self.indent_count });
             }
+            printName(@returnAddress());
+            if (debug_output) std.debug.print(" popIndent ", .{});
+            self.debugPrintIndentStack();
+        }
+
+        pub fn debugPrintIndentStack(self: *Self) void {
+            if (!debug_output) return;
+            for (self.indent_stack.items) |item| std.debug.print("{}", .{@intFromBool(item.realized)});
+            std.debug.print("\n", .{});
         }
 
         pub fn indentStackEmpty(self: *Self) bool {
@@ -3485,4 +3508,14 @@ fn AutoIndentingStream(comptime UnderlyingWriter: type) type {
             return indent_count * self.indent_delta;
         }
     };
+}
+
+const debug_output = false;
+fn printName(address: usize) void {
+    if (!debug_output) return;
+    const debug_info = std.debug.getSelfDebugInfo() catch return std.debug.print("bad debug_info", .{});
+    const module = debug_info.getModuleForAddress(address) catch return std.debug.print("bad module", .{});
+    const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address) catch return std.debug.print("bad symbol_info", .{});
+    defer if (symbol_info.source_location) |sl| debug_info.allocator.free(sl.file_name);
+    std.debug.print("{s}:{}", .{ symbol_info.name, symbol_info.source_location.?.line });
 }
